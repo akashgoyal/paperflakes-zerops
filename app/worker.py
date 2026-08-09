@@ -40,8 +40,10 @@ def _maybe_generate_document_facts(document_id: int) -> None:
             db.set_document_facts_status(document_id, "done")  # nothing to generate from
             return
         label = document["title"] or document["filename"]
-        fact_texts = facts.generate_facts(label, document["ocr_text"], style=document["fact_style"])
-        db.save_facts([(document["batch_id"], document_id, text) for text in fact_texts])
+        fact_items = facts.generate_facts(label, document["ocr_text"])
+        db.save_facts([
+            (document["batch_id"], document_id, item["category"], item["text"]) for item in fact_items
+        ])
         db.set_document_facts_status(document_id, "done")
     except Exception:
         traceback.print_exc()

@@ -38,10 +38,6 @@ class DocumentFromUrl(BaseModel):
     title: str | None = None
 
 
-class CreateBatchRequest(BaseModel):
-    style: str = "did_you_know"
-
-
 def _register_document(
     batch_id: int, filename: str, dest_path: Path, title: str | None = None, source_url: str | None = None
 ) -> dict:
@@ -94,8 +90,8 @@ def status():
 
 
 @app.post("/api/batches")
-def create_batch(payload: CreateBatchRequest = CreateBatchRequest()):
-    return {"batch_id": db.create_batch(payload.style)}
+def create_batch():
+    return {"batch_id": db.create_batch()}
 
 
 @app.post("/api/batches/{batch_id}/documents")

@@ -13,9 +13,9 @@ def ping() -> None:
         cur.execute("SELECT 1")
 
 
-def create_batch(fact_style: str = "did_you_know") -> int:
+def create_batch() -> int:
     with get_conn() as conn, conn.cursor() as cur:
-        cur.execute("INSERT INTO batches (fact_style) VALUES (%s) RETURNING id", (fact_style,))
+        cur.execute("INSERT INTO batches DEFAULT VALUES RETURNING id")
         return cur.fetchone()["id"]
 
 
@@ -201,30 +201,29 @@ def set_document_facts_status(document_id: int, status: str) -> None:
 
 
 def get_document_with_text(document_id: int):
-    """The document plus all its successfully-OCR'd page text concatenated, plus its
-    batch's chosen fact style."""
+    """The document plus all its successfully-OCR'd page text concatenated."""
     with get_conn() as conn, conn.cursor() as cur:
         cur.execute(
             """
-            SELECT d.id, d.batch_id, d.title, d.filename, b.fact_style,
+            SELECT d.id, d.batch_id, d.title, d.filename,
                    string_agg(p.ocr_text, E'\n' ORDER BY p.page_number) FILTER (WHERE p.status = 'done') AS ocr_text
             FROM documents d
-            JOIN batches b ON b.id = d.batch_id
             LEFT JOIN pages p ON p.document_id = d.id
             WHERE d.id = %s
-            GROUP BY d.id, d.batch_id, d.title, d.filename, b.fact_style
+            GROUP BY d.id, d.batch_id, d.title, d.filename
             """,
             (document_id,),
         )
         return cur.fetchone()
 
 
-def save_facts(facts: list[tuple[int, int, str]]) -> None:
+def save_facts(facts: list[tuple[int, int, str, str]]) -> None:
+    """Each item: (batch_id, document_id, category, fact_text)."""
     if not facts:
         return
     with get_conn() as conn, conn.cursor() as cur:
         cur.executemany(
-            "INSERT INTO facts (batch_id, document_id, fact_text) VALUES (%s, %s, %s)",
+            "INSERT INTO facts (batch_id, document_id, category, fact_text) VALUES (%s, %s, %s, %s)",
             facts,
         )
 
@@ -233,7 +232,7 @@ def get_facts(batch_id: int):
     with get_conn() as conn, conn.cursor() as cur:
         cur.execute(
             """
-            SELECT f.id, f.document_id, f.fact_text,
+            SELECT f.id, f.document_id, f.category, f.fact_text,
                    coalesce(d.title, d.filename) AS document_title, d.source_url
             FROM facts f
             JOIN documents d ON d.id = f.document_id
@@ -276,7 +275,7 @@ def get_pages(document_id: int):
 
 def get_batch(batch_id: int):
     with get_conn() as conn, conn.cursor() as cur:
-        cur.execute("SELECT id, created_at, fact_style FROM batches WHERE id = %s", (batch_id,))
+        cur.execute("SELECT id, created_at FROM batches WHERE id = %s", (batch_id,))
         batch = cur.fetchone()
         if batch is None:
             return None

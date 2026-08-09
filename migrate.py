@@ -49,6 +49,7 @@ CREATE TABLE IF NOT EXISTS facts (
     id SERIAL PRIMARY KEY,
     batch_id INTEGER NOT NULL REFERENCES batches(id) ON DELETE CASCADE,
     document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    category TEXT NOT NULL DEFAULT 'did_you_know',
     fact_text TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -62,6 +63,7 @@ ALTER TABLE documents ADD COLUMN IF NOT EXISTS facts_status TEXT NOT NULL DEFAUL
 ALTER TABLE documents ADD COLUMN IF NOT EXISTS source_url TEXT;
 ALTER TABLE batches ADD COLUMN IF NOT EXISTS facts_status TEXT NOT NULL DEFAULT 'pending';
 ALTER TABLE batches ADD COLUMN IF NOT EXISTS fact_style TEXT NOT NULL DEFAULT 'did_you_know';
+ALTER TABLE facts ADD COLUMN IF NOT EXISTS category TEXT NOT NULL DEFAULT 'did_you_know';
 
 CREATE INDEX IF NOT EXISTS idx_pages_status ON pages (status, id);
 CREATE INDEX IF NOT EXISTS idx_documents_batch ON documents (batch_id);
