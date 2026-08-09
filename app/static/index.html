@@ -102,12 +102,21 @@
   .note-tag { font-size: 0.74rem; font-style: italic; opacity: 0.7; margin-bottom: 0.6rem; }
   .note-actions { display: flex; gap: 0.4rem; }
 
-  .note-loading, .note-info {
+  .note-loading {
     border-radius: 12px; padding: 1.1rem; background: var(--panel2); border: 1px solid var(--border);
     display: flex; align-items: center; gap: 0.75rem; animation: notein 0.35s ease both;
   }
   .note-loading .spinner-sm { width: 20px; height: 20px; border-width: 3px; }
-  .note-loading-text, .note-info-text { color: var(--muted); font-size: 0.85rem; line-height: 1.35; }
+  .note-loading-text { color: var(--muted); font-size: 0.85rem; line-height: 1.35; }
+
+  .filter-row { display: flex; flex-direction: column; gap: 0.55rem; margin-bottom: 1rem; }
+  .category-filters { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+  .category-chip {
+    font: inherit; font-size: 0.7rem; font-weight: 600; padding: 0.3rem 0.65rem; border-radius: 999px;
+    cursor: pointer; border: 1px solid var(--border); background: var(--panel2); color: var(--muted);
+  }
+  .category-chip.active { background: rgba(124,92,255,0.18); border-color: var(--accent); color: var(--text); }
+  #paperFilter { font-size: 0.82rem; padding: 0.4rem 0.6rem; }
 
   .top-bar { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; flex-wrap: wrap; margin-bottom: 1.5rem; }
   .tech-badges { display: flex; gap: 0.4rem; flex-wrap: wrap; }
@@ -178,6 +187,10 @@
             <button class="icon-btn" id="downloadAllBtn" style="display:none;">⬇ Download all</button>
           </div>
         </div>
+        <div class="filter-row">
+          <div class="category-filters" id="categoryFilters"></div>
+          <select id="paperFilter"><option value="">All papers</option></select>
+        </div>
         <div class="notes-scroll">
           <div class="notes-grid" id="notesGrid">
             <div class="notes-empty" id="notesEmpty">Facts appear here as each document finishes processing.</div>
@@ -199,8 +212,9 @@ const ARXIV_PAPERS = [
   { title: "An Image is Worth 16x16 Words (ViT)", url: "https://arxiv.org/pdf/2010.11929" },
 ];
 const NOTE_COLORS = ['#fdf1a8', '#ffd3e6', '#c3f2d8', '#cfe3ff', '#ffdcb8'];
-// Every document generates one fact per category — each note tags itself
-// with the category it came from (see app/facts.py CATEGORIES, kept in sync).
+// Every page generates one fact per category — each note tags itself with the
+// category it came from (see app/facts.py CATEGORIES/CATEGORY_ORDER, kept in sync).
+const CATEGORY_ORDER = ['did_you_know', 'key_takeaways', 'contrarian_arguments', 'actionable_data_points'];
 const CATEGORY_META = {
   did_you_know: { icon: '💡', label: 'DID YOU KNOW?' },
   key_takeaways: { icon: '🔑', label: 'KEY TAKEAWAY' },
@@ -210,6 +224,8 @@ const CATEGORY_META = {
 const TWEET_TAGS = '@WeMakeDevs @zeropsio';
 const TWEET_ATTRIBUTION = 'Built by PaperFlakes-zerops';
 
+const categoryFiltersEl = document.getElementById('categoryFilters');
+const paperFilterEl = document.getElementById('paperFilter');
 const paperList = document.getElementById('paperList');
 const arxivBtn = document.getElementById('arxivBtn');
 const arxivStatus = document.getElementById('arxivStatus');
@@ -232,9 +248,43 @@ for (const paper of ARXIV_PAPERS) {
   paperList.appendChild(row);
 }
 
+for (const category of CATEGORY_ORDER) {
+  const meta = CATEGORY_META[category];
+  const chip = document.createElement('button');
+  chip.type = 'button';
+  chip.className = 'category-chip active';
+  chip.dataset.category = category;
+  chip.textContent = `${meta.icon} ${meta.label}`;
+  categoryFiltersEl.appendChild(chip);
+}
+
 let pollTimer = null;
 let activeBatchId = null;
 let allFactsFlat = [];
+let visibleFactsFlat = [];
+let lastDocs = [];
+let lastFactsList = [];
+let enabledCategories = new Set(CATEGORY_ORDER);
+let selectedPaperId = '';
+
+categoryFiltersEl.addEventListener('click', (event) => {
+  const chip = event.target.closest('.category-chip');
+  if (!chip) return;
+  const category = chip.dataset.category;
+  if (enabledCategories.has(category)) {
+    enabledCategories.delete(category);
+    chip.classList.remove('active');
+  } else {
+    enabledCategories.add(category);
+    chip.classList.add('active');
+  }
+  renderFactsPanel(lastDocs, lastFactsList);
+});
+
+paperFilterEl.addEventListener('change', () => {
+  selectedPaperId = paperFilterEl.value;
+  renderFactsPanel(lastDocs, lastFactsList);
+});
 
 arxivBtn.addEventListener('click', async () => {
   const checked = Array.from(paperList.querySelectorAll('input:checked'));
@@ -313,12 +363,14 @@ async function pollBatch(batchId) {
   const res = await fetch(`/api/batches/${batchId}`);
   if (!res.ok) return;
   const batch = await res.json();
+  lastDocs = batch.documents;
+  lastFactsList = batch.facts;
   renderDocuments(batch.documents);
   renderFactsPanel(batch.documents, batch.facts);
 
   const stillWorking = batch.documents.some(d =>
     d.status === 'queued' || d.status === 'processing' ||
-    ((d.status === 'done' || d.status === 'error') && (d.facts_status === 'pending' || d.facts_status === 'generating'))
+    ((d.status === 'done' || d.status === 'error') && d.facts_status !== 'done')
   );
   if (!stillWorking && pollTimer) {
     clearInterval(pollTimer);
@@ -343,37 +395,46 @@ function renderDocuments(docs) {
   }
 }
 
+function updatePaperFilterOptions(relevantDocs) {
+  const current = paperFilterEl.value;
+  paperFilterEl.innerHTML = '<option value="">All papers</option>' +
+    relevantDocs.map(d => `<option value="${d.id}">${escapeHtml(d.title || d.filename)}</option>`).join('');
+  paperFilterEl.value = relevantDocs.some(d => String(d.id) === current) ? current : '';
+  selectedPaperId = paperFilterEl.value;
+}
+
 function renderFactsPanel(docs, factsList) {
   allFactsFlat = factsList;
+  visibleFactsFlat = [];
   notesGrid.innerHTML = '';
 
   const relevant = docs.filter(d => d.status === 'done' || d.status === 'error');
-  let anyGenerating = false;
+  updatePaperFilterOptions(relevant);
+  const visibleDocs = selectedPaperId ? relevant.filter(d => String(d.id) === selectedPaperId) : relevant;
+
+  const anyGenerating = relevant.some(d => d.facts_status !== 'done');
   let cardCount = 0;
 
-  for (const doc of relevant) {
+  for (const doc of visibleDocs) {
     const label = doc.title || doc.filename;
-    if (doc.facts_status === 'pending' || doc.facts_status === 'generating') {
-      anyGenerating = true;
-      notesGrid.appendChild(buildLoadingCard(label));
-      cardCount += 1;
-      continue;
-    }
-    if (doc.facts_status === 'error') {
-      notesGrid.appendChild(buildInfoCard(`Couldn't generate facts for "${label}".`));
-      cardCount += 1;
-      continue;
-    }
     const docFacts = factsList.filter(f => f.document_id === doc.id);
-    if (docFacts.length === 0) {
-      notesGrid.appendChild(buildInfoCard(`No facts generated for "${label}".`));
-      cardCount += 1;
-      continue;
+    const stillGenerating = doc.facts_status !== 'done';
+
+    for (const category of CATEGORY_ORDER) {
+      if (!enabledCategories.has(category)) continue;
+      const fact = docFacts.find(f => f.category === category);
+      if (fact) {
+        visibleFactsFlat.push(fact);
+        notesGrid.appendChild(buildNoteCard(fact, cardCount));
+        cardCount += 1;
+      } else if (stillGenerating) {
+        notesGrid.appendChild(buildLoadingCard(label, category));
+        cardCount += 1;
+      }
+      // Not generating and no fact for this category: it silently didn't
+      // produce a result (e.g. a transient API error) — omit rather than
+      // clutter the panel with a permanent error card per category.
     }
-    docFacts.forEach((fact, i) => {
-      notesGrid.appendChild(buildNoteCard(fact, cardCount + i));
-    });
-    cardCount += docFacts.length;
   }
 
   if (cardCount === 0) {
@@ -383,20 +444,14 @@ function renderFactsPanel(docs, factsList) {
   headerSpinner.style.display = anyGenerating ? 'inline-block' : 'none';
   headerSpinnerText.style.display = anyGenerating ? 'inline' : 'none';
   headerSpinnerText.textContent = anyGenerating ? 'Creating info cards…' : '';
-  downloadAllBtn.style.display = factsList.length > 0 ? 'inline-block' : 'none';
+  downloadAllBtn.style.display = visibleFactsFlat.length > 0 ? 'inline-block' : 'none';
 }
 
-function buildLoadingCard(label) {
+function buildLoadingCard(label, category) {
+  const meta = CATEGORY_META[category] || CATEGORY_META.did_you_know;
   const el = document.createElement('div');
   el.className = 'note-loading';
-  el.innerHTML = `<span class="spinner-sm"></span><span class="note-loading-text"><strong>${escapeHtml(label)}</strong> is processed.<br>Creating info cards…</span>`;
-  return el;
-}
-
-function buildInfoCard(message) {
-  const el = document.createElement('div');
-  el.className = 'note-info';
-  el.innerHTML = `<span class="note-info-text">${escapeHtml(message)}</span>`;
+  el.innerHTML = `<span class="spinner-sm"></span><span class="note-loading-text"><strong>${escapeHtml(label)}</strong><br>Creating ${meta.icon} ${meta.label.toLowerCase()} card…</span>`;
   return el;
 }
 
@@ -427,7 +482,7 @@ notesGrid.addEventListener('click', (event) => {
   if (btn.dataset.action === 'share') shareOnTwitter(fact);
 });
 
-downloadAllBtn.addEventListener('click', () => downloadAllNotes(allFactsFlat));
+downloadAllBtn.addEventListener('click', () => downloadAllNotes(visibleFactsFlat));
 
 function shareOnTwitter(fact) {
   const lines = [fact.fact_text, '', `📄 ${fact.document_title}`];

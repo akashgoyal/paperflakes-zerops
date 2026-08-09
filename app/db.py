@@ -91,11 +91,11 @@ def recover_orphaned_pages() -> int:
         return cur.rowcount
 
 
-def recover_orphaned_facts() -> list[int]:
-    """Reset documents left in 'generating' by a worker that crashed mid-fact-generation.
+def recover_orphaned_page_facts() -> list[int]:
+    """Reset pages left in 'generating' by a worker that crashed mid-fact-generation.
     Returns their ids so the caller can re-trigger generation for them."""
     with get_conn() as conn, conn.cursor() as cur:
-        cur.execute("UPDATE documents SET facts_status = 'pending' WHERE facts_status = 'generating' RETURNING id")
+        cur.execute("UPDATE pages SET facts_status = 'pending' WHERE facts_status = 'generating' RETURNING id")
         return [row["id"] for row in cur.fetchall()]
 
 
@@ -184,47 +184,77 @@ def refresh_document_progress(document_id: int) -> str:
         return status
 
 
-def claim_document_facts(document_id: int) -> bool:
-    """Atomically flip a document from 'pending' to 'generating'. Returns True only for
-    the caller that wins the flip, so fact generation runs at most once per document."""
+def claim_page_facts(page_id: int) -> bool:
+    """Atomically flip a page from 'pending' to 'generating'. Returns True only for
+    the caller that wins the flip, so fact generation runs at most once per page."""
     with get_conn() as conn, conn.cursor() as cur:
         cur.execute(
-            "UPDATE documents SET facts_status = 'generating' WHERE id = %s AND facts_status = 'pending' RETURNING id",
-            (document_id,),
+            "UPDATE pages SET facts_status = 'generating' WHERE id = %s AND facts_status = 'pending' RETURNING id",
+            (page_id,),
         )
         return cur.fetchone() is not None
 
 
-def set_document_facts_status(document_id: int, status: str) -> None:
+def set_page_facts_status(page_id: int, status: str) -> None:
     with get_conn() as conn, conn.cursor() as cur:
-        cur.execute("UPDATE documents SET facts_status = %s WHERE id = %s", (status, document_id))
+        cur.execute("UPDATE pages SET facts_status = %s WHERE id = %s", (status, page_id))
 
 
-def get_document_with_text(document_id: int):
-    """The document plus all its successfully-OCR'd page text concatenated."""
+def get_page_for_facts(page_id: int):
+    """The page's own OCR text plus its parent document's identifying info."""
     with get_conn() as conn, conn.cursor() as cur:
         cur.execute(
             """
-            SELECT d.id, d.batch_id, d.title, d.filename,
-                   string_agg(p.ocr_text, E'\n' ORDER BY p.page_number) FILTER (WHERE p.status = 'done') AS ocr_text
-            FROM documents d
-            LEFT JOIN pages p ON p.document_id = d.id
-            WHERE d.id = %s
-            GROUP BY d.id, d.batch_id, d.title, d.filename
+            SELECT p.id, p.document_id, p.content_hash, p.ocr_text,
+                   d.batch_id, d.title, d.filename
+            FROM pages p
+            JOIN documents d ON d.id = p.document_id
+            WHERE p.id = %s
             """,
-            (document_id,),
+            (page_id,),
         )
         return cur.fetchone()
 
 
-def save_facts(facts: list[tuple[int, int, str, str]]) -> None:
-    """Each item: (batch_id, document_id, category, fact_text)."""
-    if not facts:
-        return
+def get_existing_fact_categories(page_id: int) -> set:
+    """Categories already generated for this page — lets a resumed run skip work
+    already done before a crash instead of regenerating (and duplicating) it."""
     with get_conn() as conn, conn.cursor() as cur:
-        cur.executemany(
-            "INSERT INTO facts (batch_id, document_id, category, fact_text) VALUES (%s, %s, %s, %s)",
-            facts,
+        cur.execute("SELECT category FROM facts WHERE page_id = %s", (page_id,))
+        return {row["category"] for row in cur.fetchall()}
+
+
+def find_cached_fact(content_hash: str, category: str):
+    """A previously-generated fact for this exact page content + category, if any."""
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT fact_text FROM page_facts WHERE content_hash = %s AND category = %s",
+            (content_hash, category),
+        )
+        row = cur.fetchone()
+        return row["fact_text"] if row else None
+
+
+def cache_fact(content_hash: str, category: str, fact_text: str) -> None:
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO page_facts (content_hash, category, fact_text)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (content_hash, category) DO NOTHING
+            """,
+            (content_hash, category, fact_text),
+        )
+
+
+def save_fact(batch_id: int, document_id: int, page_id: int, category: str, fact_text: str) -> None:
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO facts (batch_id, document_id, page_id, category, fact_text)
+            VALUES (%s, %s, %s, %s, %s)
+            """,
+            (batch_id, document_id, page_id, category, fact_text),
         )
 
 
@@ -245,13 +275,20 @@ def get_facts(batch_id: int):
 
 
 def get_document(document_id: int):
+    """facts_status is computed from the document's real (non-skipped) pages: 'done'
+    once every one of them has finished generating its facts, else 'generating' —
+    or 'pending' if none have reached OCR-done/error yet."""
     with get_conn() as conn, conn.cursor() as cur:
         cur.execute(
             """
-            SELECT id, batch_id, filename, title, status, facts_status,
-                   num_pages, pages_done, char_count, word_count, error_message
-            FROM documents
-            WHERE id = %s
+            SELECT d.id, d.batch_id, d.filename, d.title, d.status,
+                   d.num_pages, d.pages_done, d.char_count, d.word_count, d.error_message,
+                   COALESCE((
+                       SELECT CASE WHEN bool_and(p.facts_status = 'done') THEN 'done' ELSE 'generating' END
+                       FROM pages p WHERE p.document_id = d.id AND p.status IN ('done', 'error')
+                   ), 'pending') AS facts_status
+            FROM documents d
+            WHERE d.id = %s
             """,
             (document_id,),
         )
@@ -281,10 +318,14 @@ def get_batch(batch_id: int):
             return None
         cur.execute(
             """
-            SELECT d.id, d.filename, d.title, d.status, d.facts_status, d.num_pages, d.pages_done,
+            SELECT d.id, d.filename, d.title, d.status, d.num_pages, d.pages_done,
                    d.char_count, d.word_count, d.error_message,
                    (SELECT left(coalesce(p.ocr_text, ''), 150) FROM pages p
-                    WHERE p.document_id = d.id AND p.page_number = 1) AS text_preview
+                    WHERE p.document_id = d.id AND p.page_number = 1) AS text_preview,
+                   COALESCE((
+                       SELECT CASE WHEN bool_and(p.facts_status = 'done') THEN 'done' ELSE 'generating' END
+                       FROM pages p WHERE p.document_id = d.id AND p.status IN ('done', 'error')
+                   ), 'pending') AS facts_status
             FROM documents d
             WHERE d.batch_id = %s
             ORDER BY d.id ASC
