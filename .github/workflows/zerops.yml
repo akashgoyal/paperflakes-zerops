@@ -1,0 +1,25 @@
+name: Zerops deploy
+on:
+  push:
+    branches: [main]
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The artifact ships .git into the runtime (-g below); the
+          # job-scoped checkout token must not ride along in .git/config.
+          persist-credentials: false
+      - name: Install zcli
+        run: |
+          curl -sSL https://zerops.io/zcli/install.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Deploy to Zerops
+        run: |
+          zcli login "$ZEROPS_TOKEN"
+          # -g ships .git in the artifact: this service is its own push
+          # source, and a deploy without it would wipe /var/www/.git.
+          zcli push --service-id "${{ secrets.ZEROPS_SERVICE_ID }}" --setup "app" -g
+        env:
+          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
