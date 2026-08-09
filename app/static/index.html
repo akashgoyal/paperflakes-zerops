@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Batch PDF OCR</title>
+<title>PaperFlakes-zerops</title>
 <style>
   :root {
     --bg: #0f1220;
@@ -108,11 +108,40 @@
   }
   .note-loading .spinner-sm { width: 20px; height: 20px; border-width: 3px; }
   .note-loading-text, .note-info-text { color: var(--muted); font-size: 0.85rem; line-height: 1.35; }
+
+  .top-bar { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; flex-wrap: wrap; margin-bottom: 0.5rem; }
+  .tech-badges { display: flex; gap: 0.4rem; flex-wrap: wrap; }
+  .tech-badge {
+    font-size: 0.68rem; font-weight: 600; padding: 0.3rem 0.65rem; border-radius: 999px;
+    background: var(--panel2); border: 1px solid var(--border); color: var(--muted); white-space: nowrap;
+  }
+  .style-row { display: flex; align-items: center; gap: 0.6rem; margin-bottom: 1.25rem; flex-wrap: wrap; }
+  .style-row label { color: var(--muted); font-size: 0.8rem; white-space: nowrap; }
+  .style-row select { width: auto; padding: 0.45rem 0.7rem; font-size: 0.85rem; }
 </style>
 </head>
 <body>
-  <h1>📄 Batch PDF OCR</h1>
-  <p class="sub">Powered by Together AI (Gemma), one page at a time. Trial mode: only page 1 of each document is OCR'd.</p>
+  <div class="top-bar">
+    <div>
+      <h1>📄 PaperFlakes-zerops</h1>
+      <p class="sub">Turn dense PDFs into shareable, bite-sized facts — powered by Zerops.</p>
+    </div>
+    <div class="tech-badges">
+      <span class="tech-badge">⚡ Deployed on Zerops</span>
+      <span class="tech-badge">🐘 PostgreSQL</span>
+      <span class="tech-badge">🐍 Python / FastAPI</span>
+    </div>
+  </div>
+
+  <div class="style-row">
+    <label for="factStyleSelect">Card style</label>
+    <select id="factStyleSelect">
+      <option value="did_you_know">💡 Did You Know?</option>
+      <option value="key_takeaways">🔑 Key Takeaways</option>
+      <option value="contrarian_arguments">⚡ Contrarian Arguments</option>
+      <option value="actionable_data_points">📊 Actionable Data Points</option>
+    </select>
+  </div>
 
   <div class="layout">
     <div class="col-select">
@@ -154,7 +183,7 @@
     <div class="col-facts">
       <div class="side-col">
         <div class="side-header">
-          <h2>💡 Did You Know?</h2>
+          <h2 id="factsHeading">💡 Did You Know?</h2>
           <div class="side-header-status">
             <span class="spinner-sm" id="headerSpinner" style="display:none;"></span>
             <span class="doc-meta" id="headerSpinnerText" style="display:none;"></span>
@@ -182,7 +211,16 @@ const ARXIV_PAPERS = [
   { title: "An Image is Worth 16x16 Words (ViT)", url: "https://arxiv.org/pdf/2010.11929" },
 ];
 const NOTE_COLORS = ['#fdf1a8', '#ffd3e6', '#c3f2d8', '#cfe3ff', '#ffdcb8'];
+const STYLE_META = {
+  did_you_know: { icon: '💡', label: 'DID YOU KNOW?', heading: 'Did You Know?' },
+  key_takeaways: { icon: '🔑', label: 'KEY TAKEAWAY', heading: 'Key Takeaways' },
+  contrarian_arguments: { icon: '⚡', label: 'CONTRARIAN TAKE', heading: 'Contrarian Arguments' },
+  actionable_data_points: { icon: '📊', label: 'DATA POINT', heading: 'Actionable Data Points' },
+};
+const TWEET_TAGS = '@WeMakeDevs @zeropsio';
+const TWEET_ATTRIBUTION = 'Built by PaperFlakes-zerops';
 
+const factStyleSelect = document.getElementById('factStyleSelect');
 const paperList = document.getElementById('paperList');
 const arxivBtn = document.getElementById('arxivBtn');
 const arxivStatus = document.getElementById('arxivStatus');
@@ -197,6 +235,7 @@ const notesEmpty = document.getElementById('notesEmpty');
 const downloadAllBtn = document.getElementById('downloadAllBtn');
 const headerSpinner = document.getElementById('headerSpinner');
 const headerSpinnerText = document.getElementById('headerSpinnerText');
+const factsHeading = document.getElementById('factsHeading');
 
 for (const paper of ARXIV_PAPERS) {
   const row = document.createElement('label');
@@ -268,7 +307,11 @@ uploadBtn.addEventListener('click', async () => {
 
 async function ensureBatch() {
   if (activeBatchId !== null) return activeBatchId;
-  const res = await fetch('/api/batches', { method: 'POST' });
+  const res = await fetch('/api/batches', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ style: factStyleSelect.value }),
+  });
   const { batch_id } = await res.json();
   activeBatchId = batch_id;
   return batch_id;
@@ -287,7 +330,7 @@ async function pollBatch(batchId) {
   if (!res.ok) return;
   const batch = await res.json();
   renderDocuments(batch.documents);
-  renderFactsPanel(batch.documents, batch.facts);
+  renderFactsPanel(batch.documents, batch.facts, batch.fact_style);
 
   const stillWorking = batch.documents.some(d =>
     d.status === 'queued' || d.status === 'processing' ||
@@ -316,8 +359,13 @@ function renderDocuments(docs) {
   }
 }
 
-function renderFactsPanel(docs, factsList) {
+let currentFactStyle = 'did_you_know';
+
+function renderFactsPanel(docs, factsList, factStyle) {
   allFactsFlat = factsList;
+  currentFactStyle = factStyle || 'did_you_know';
+  const meta = STYLE_META[currentFactStyle] || STYLE_META.did_you_know;
+  factsHeading.textContent = `${meta.icon} ${meta.heading}`;
   notesGrid.innerHTML = '';
 
   const relevant = docs.filter(d => d.status === 'done' || d.status === 'error');
@@ -374,11 +422,12 @@ function buildInfoCard(message) {
 }
 
 function buildNoteCard(fact, colorIndex) {
+  const meta = STYLE_META[currentFactStyle] || STYLE_META.did_you_know;
   const el = document.createElement('div');
   el.className = 'note';
   el.style.background = NOTE_COLORS[colorIndex % NOTE_COLORS.length];
   el.innerHTML = `
-    <div class="note-label">💡 DID YOU KNOW?</div>
+    <div class="note-label">${meta.icon} ${meta.label}</div>
     <div class="note-text">${escapeHtml(fact.fact_text)}</div>
     <div class="note-tag">— ${escapeHtml(fact.document_title)}</div>
     <div class="note-actions">
@@ -402,8 +451,10 @@ notesGrid.addEventListener('click', (event) => {
 downloadAllBtn.addEventListener('click', () => downloadAllNotes(allFactsFlat));
 
 function shareOnTwitter(fact) {
-  const text = `${fact.fact_text}\n\n— ${fact.document_title}`;
-  window.open('https://twitter.com/intent/tweet?text=' + encodeURIComponent(text), '_blank', 'noopener,noreferrer');
+  const lines = [fact.fact_text, '', `📄 ${fact.document_title}`];
+  if (fact.source_url) lines.push(fact.source_url);
+  lines.push('', TWEET_TAGS, TWEET_ATTRIBUTION);
+  window.open('https://twitter.com/intent/tweet?text=' + encodeURIComponent(lines.join('\n')), '_blank', 'noopener,noreferrer');
 }
 
 function roundRect(ctx, x, y, w, h, r) {
@@ -445,9 +496,10 @@ function drawStickyNote(ctx, x, y, w, h, fact, colorIndex) {
   ctx.fill();
   ctx.restore();
 
+  const meta = STYLE_META[currentFactStyle] || STYLE_META.did_you_know;
   ctx.fillStyle = 'rgba(42,36,23,0.65)';
   ctx.font = '700 14px -apple-system, sans-serif';
-  ctx.fillText('💡 DID YOU KNOW?', x + 28, y + 42);
+  ctx.fillText(`${meta.icon} ${meta.label}`, x + 28, y + 42);
 
   ctx.fillStyle = '#2a2417';
   ctx.font = '19px -apple-system, sans-serif';

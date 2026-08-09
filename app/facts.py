@@ -9,6 +9,45 @@ REQUEST_TIMEOUT_SECONDS = 180.0
 FACTS_PER_DOCUMENT = 3
 MAX_INPUT_CHARS = 6000
 
+DEFAULT_STYLE = "did_you_know"
+
+STYLES = {
+    "did_you_know": {
+        "label": "Did You Know?",
+        "icon": "💡",
+        "instruction": (
+            'write {n} short, surprising "Did you know?" facts a curious general reader '
+            "(not a specialist) would enjoy. Each must be directly supported by the excerpt, "
+            "1-2 sentences, and free of jargon dumps."
+        ),
+    },
+    "key_takeaways": {
+        "label": "Key Takeaway",
+        "icon": "🔑",
+        "instruction": (
+            "write {n} key takeaways a busy reader needs to know. Each should be a concise, "
+            "high-value insight directly supported by the excerpt, 1-2 sentences."
+        ),
+    },
+    "contrarian_arguments": {
+        "label": "Contrarian Take",
+        "icon": "⚡",
+        "instruction": (
+            "identify {n} contrarian or counter-intuitive claims this excerpt makes against "
+            "conventional wisdom or prior assumptions. Each should be 1-2 sentences, directly "
+            "supported by the excerpt."
+        ),
+    },
+    "actionable_data_points": {
+        "label": "Data Point",
+        "icon": "📊",
+        "instruction": (
+            "extract {n} concrete, actionable data points (numbers, results, benchmarks) from "
+            "this excerpt that a practitioner could actually cite or use. Each should be 1-2 sentences."
+        ),
+    },
+}
+
 _client = None
 
 
@@ -34,13 +73,13 @@ def _parse_facts(content: str) -> list[str]:
     return [cleaned] if cleaned else []
 
 
-def generate_facts(title: str, text: str) -> list[str]:
+def generate_facts(title: str, text: str, style: str = DEFAULT_STYLE) -> list[str]:
+    style_def = STYLES.get(style, STYLES[DEFAULT_STYLE])
+    instruction = style_def["instruction"].format(n=FACTS_PER_DOCUMENT)
     prompt = (
-        f'Based on this excerpt from the paper "{title}", write {FACTS_PER_DOCUMENT} short, '
-        'surprising "Did you know?" facts a curious general reader (not a specialist) would enjoy. '
-        "Each fact must be directly supported by the excerpt, 1-2 sentences, and free of jargon dumps. "
+        f'Based on this excerpt from the paper "{title}", {instruction} '
         "Do not explain your reasoning, do not add commentary or numbering — "
-        'respond with ONLY a JSON array of strings, e.g. ["fact one", "fact two"].\n\n'
+        'respond with ONLY a JSON array of strings, e.g. ["item one", "item two"].\n\n'
         f"Excerpt:\n{text[:MAX_INPUT_CHARS]}"
     )
     response = _get_client().chat.completions.create(

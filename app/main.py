@@ -38,7 +38,13 @@ class DocumentFromUrl(BaseModel):
     title: str | None = None
 
 
-def _register_document(batch_id: int, filename: str, dest_path: Path, title: str | None = None) -> dict:
+class CreateBatchRequest(BaseModel):
+    style: str = "did_you_know"
+
+
+def _register_document(
+    batch_id: int, filename: str, dest_path: Path, title: str | None = None, source_url: str | None = None
+) -> dict:
     try:
         num_pages = ocr.count_pages(str(dest_path))
     except Exception:
@@ -50,7 +56,7 @@ def _register_document(batch_id: int, filename: str, dest_path: Path, title: str
         raise HTTPException(status_code=400, detail="PDF has no pages")
 
     pages_to_process = min(num_pages, MAX_PAGES_PER_DOCUMENT)
-    document_id = db.add_document(batch_id, filename, str(dest_path), num_pages, pages_to_process, title)
+    document_id = db.add_document(batch_id, filename, str(dest_path), num_pages, pages_to_process, title, source_url)
     return {"document_id": document_id, "num_pages": num_pages}
 
 
@@ -88,8 +94,8 @@ def status():
 
 
 @app.post("/api/batches")
-def create_batch():
-    return {"batch_id": db.create_batch()}
+def create_batch(payload: CreateBatchRequest = CreateBatchRequest()):
+    return {"batch_id": db.create_batch(payload.style)}
 
 
 @app.post("/api/batches/{batch_id}/documents")
@@ -132,7 +138,7 @@ def add_document_from_url(batch_id: int, payload: DocumentFromUrl):
         dest_path.unlink(missing_ok=True)
         raise HTTPException(status_code=400, detail="could not download PDF")
 
-    return _register_document(batch_id, filename, dest_path, title=payload.title)
+    return _register_document(batch_id, filename, dest_path, title=payload.title, source_url=url)
 
 
 @app.get("/api/batches/{batch_id}")

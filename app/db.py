@@ -13,9 +13,9 @@ def ping() -> None:
         cur.execute("SELECT 1")
 
 
-def create_batch() -> int:
+def create_batch(fact_style: str = "did_you_know") -> int:
     with get_conn() as conn, conn.cursor() as cur:
-        cur.execute("INSERT INTO batches DEFAULT VALUES RETURNING id")
+        cur.execute("INSERT INTO batches (fact_style) VALUES (%s) RETURNING id", (fact_style,))
         return cur.fetchone()["id"]
 
 
@@ -26,18 +26,24 @@ def batch_exists(batch_id: int) -> bool:
 
 
 def add_document(
-    batch_id: int, filename: str, file_path: str, num_pages: int, pages_to_process: int, title: str | None = None
+    batch_id: int,
+    filename: str,
+    file_path: str,
+    num_pages: int,
+    pages_to_process: int,
+    title: str | None = None,
+    source_url: str | None = None,
 ) -> int:
     """Insert a document and one row per page. Pages beyond pages_to_process are
     inserted as 'skipped' up front rather than queued — trial page-cap, not an error."""
     with get_conn() as conn, conn.cursor() as cur:
         cur.execute(
             """
-            INSERT INTO documents (batch_id, filename, title, file_path, num_pages, status)
-            VALUES (%s, %s, %s, %s, %s, 'queued')
+            INSERT INTO documents (batch_id, filename, title, source_url, file_path, num_pages, status)
+            VALUES (%s, %s, %s, %s, %s, %s, 'queued')
             RETURNING id
             """,
-            (batch_id, filename, title, file_path, num_pages),
+            (batch_id, filename, title, source_url, file_path, num_pages),
         )
         document_id = cur.fetchone()["id"]
         cur.executemany(
@@ -195,16 +201,18 @@ def set_document_facts_status(document_id: int, status: str) -> None:
 
 
 def get_document_with_text(document_id: int):
-    """The document plus all its successfully-OCR'd page text concatenated."""
+    """The document plus all its successfully-OCR'd page text concatenated, plus its
+    batch's chosen fact style."""
     with get_conn() as conn, conn.cursor() as cur:
         cur.execute(
             """
-            SELECT d.id, d.batch_id, d.title, d.filename,
+            SELECT d.id, d.batch_id, d.title, d.filename, b.fact_style,
                    string_agg(p.ocr_text, E'\n' ORDER BY p.page_number) FILTER (WHERE p.status = 'done') AS ocr_text
             FROM documents d
+            JOIN batches b ON b.id = d.batch_id
             LEFT JOIN pages p ON p.document_id = d.id
             WHERE d.id = %s
-            GROUP BY d.id, d.batch_id, d.title, d.filename
+            GROUP BY d.id, d.batch_id, d.title, d.filename, b.fact_style
             """,
             (document_id,),
         )
@@ -225,7 +233,8 @@ def get_facts(batch_id: int):
     with get_conn() as conn, conn.cursor() as cur:
         cur.execute(
             """
-            SELECT f.id, f.document_id, f.fact_text, coalesce(d.title, d.filename) AS document_title
+            SELECT f.id, f.document_id, f.fact_text,
+                   coalesce(d.title, d.filename) AS document_title, d.source_url
             FROM facts f
             JOIN documents d ON d.id = f.document_id
             WHERE f.batch_id = %s
@@ -267,7 +276,7 @@ def get_pages(document_id: int):
 
 def get_batch(batch_id: int):
     with get_conn() as conn, conn.cursor() as cur:
-        cur.execute("SELECT id, created_at FROM batches WHERE id = %s", (batch_id,))
+        cur.execute("SELECT id, created_at, fact_style FROM batches WHERE id = %s", (batch_id,))
         batch = cur.fetchone()
         if batch is None:
             return None

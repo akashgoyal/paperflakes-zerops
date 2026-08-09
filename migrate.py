@@ -6,6 +6,7 @@ DDL = """
 CREATE TABLE IF NOT EXISTS batches (
     id SERIAL PRIMARY KEY,
     facts_status TEXT NOT NULL DEFAULT 'pending',
+    fact_style TEXT NOT NULL DEFAULT 'did_you_know',
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -14,6 +15,7 @@ CREATE TABLE IF NOT EXISTS documents (
     batch_id INTEGER NOT NULL REFERENCES batches(id) ON DELETE CASCADE,
     filename TEXT NOT NULL,
     title TEXT,
+    source_url TEXT,
     file_path TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'queued',
     facts_status TEXT NOT NULL DEFAULT 'pending',
@@ -57,7 +59,9 @@ ALTER TABLE pages ADD COLUMN IF NOT EXISTS content_hash TEXT;
 ALTER TABLE pages ADD COLUMN IF NOT EXISTS from_cache BOOLEAN NOT NULL DEFAULT false;
 ALTER TABLE documents ADD COLUMN IF NOT EXISTS title TEXT;
 ALTER TABLE documents ADD COLUMN IF NOT EXISTS facts_status TEXT NOT NULL DEFAULT 'pending';
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS source_url TEXT;
 ALTER TABLE batches ADD COLUMN IF NOT EXISTS facts_status TEXT NOT NULL DEFAULT 'pending';
+ALTER TABLE batches ADD COLUMN IF NOT EXISTS fact_style TEXT NOT NULL DEFAULT 'did_you_know';
 
 CREATE INDEX IF NOT EXISTS idx_pages_status ON pages (status, id);
 CREATE INDEX IF NOT EXISTS idx_documents_batch ON documents (batch_id);

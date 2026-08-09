@@ -40,7 +40,7 @@ def _maybe_generate_document_facts(document_id: int) -> None:
             db.set_document_facts_status(document_id, "done")  # nothing to generate from
             return
         label = document["title"] or document["filename"]
-        fact_texts = facts.generate_facts(label, document["ocr_text"])
+        fact_texts = facts.generate_facts(label, document["ocr_text"], style=document["fact_style"])
         db.save_facts([(document["batch_id"], document_id, text) for text in fact_texts])
         db.set_document_facts_status(document_id, "done")
     except Exception:
