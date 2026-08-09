@@ -2,6 +2,8 @@ import os
 
 from together import Together
 
+from .util import call_with_hard_timeout
+
 MODEL_ID = os.environ.get("TOGETHER_MODEL", "google/gemma-4-31B-it")
 MAX_TOKENS = 4096
 REQUEST_TIMEOUT_SECONDS = 180.0
@@ -61,9 +63,12 @@ def generate_fact_for_category(title: str, text: str, category: str) -> str:
         "respond with ONLY the fact text itself.\n\n"
         f"Excerpt:\n{text[:MAX_INPUT_CHARS]}"
     )
-    response = _get_client().chat.completions.create(
-        model=MODEL_ID,
-        messages=[{"role": "user", "content": prompt}],
-        max_tokens=MAX_TOKENS,
-    )
+    def _call():
+        return _get_client().chat.completions.create(
+            model=MODEL_ID,
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=MAX_TOKENS,
+        )
+
+    response = call_with_hard_timeout(_call, REQUEST_TIMEOUT_SECONDS)
     return _clean(response.choices[0].message.content or "")

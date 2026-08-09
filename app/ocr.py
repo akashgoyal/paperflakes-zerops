@@ -6,6 +6,8 @@ import os
 import pypdfium2 as pdfium
 from together import Together
 
+from .util import call_with_hard_timeout
+
 MODEL_ID = os.environ.get("TOGETHER_MODEL", "google/gemma-4-31B-it")
 # 200 DPI, per common vision-model page-rendering guidance (scale = dpi / 72).
 RENDER_SCALE = 200 / 72
@@ -65,17 +67,20 @@ def _image_to_data_url(pil_image) -> str:
 
 
 def ocr_image(pil_image) -> str:
-    response = _get_client().chat.completions.create(
-        model=MODEL_ID,
-        messages=[
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": PROMPT},
-                    {"type": "image_url", "image_url": {"url": _image_to_data_url(pil_image)}},
-                ],
-            }
-        ],
-        max_tokens=MAX_TOKENS,
-    )
+    def _call():
+        return _get_client().chat.completions.create(
+            model=MODEL_ID,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": PROMPT},
+                        {"type": "image_url", "image_url": {"url": _image_to_data_url(pil_image)}},
+                    ],
+                }
+            ],
+            max_tokens=MAX_TOKENS,
+        )
+
+    response = call_with_hard_timeout(_call, REQUEST_TIMEOUT_SECONDS)
     return (response.choices[0].message.content or "").strip()
