@@ -5,8 +5,8 @@
 PaperFlakes transforms research PDFs into concise, shareable insight cards. Built and deployed on Zerops, it uses a Python/FastAPI service with a background worker and managed PostgreSQL to OCR and process PDFs asynchronously, distilling them into four categories of AI-generated insights. Insight cards can be filtered, downloaded, or shared on X.
 
 - **Live app:** https://app-2c11-8000.prg1.zerops.app/
+- **Demo Video:** https://youtu.be/5ra5lgwRpeQ
 - **Blog post:** https://dev.to/akash_goyal/why-i-built-paperflakes-and-how-zerops-saved-the-stack-2ki7
-- **GitHub repo:** https://github.com/akashgoyal/paperflakes-zerops
 
 ## Built on Zerops
 
