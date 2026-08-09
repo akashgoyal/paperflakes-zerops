@@ -1,0 +1,509 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Batch PDF OCR</title>
+<style>
+  :root {
+    --bg: #0f1220;
+    --panel: #171b2e;
+    --panel2: #0d1020;
+    --border: #2a2f45;
+    --text: #e8eaf2;
+    --muted: #8b90a8;
+    --accent: #7c5cff;
+    --accent2: #22d3ee;
+    --ok: #34d399;
+    --warn: #fbbf24;
+    --err: #f87171;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+    background: radial-gradient(1200px 600px at 10% -10%, #1c2140 0%, var(--bg) 60%);
+    color: var(--text);
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 2.5rem 1.5rem 4rem;
+  }
+  h1 { font-size: 1.6rem; margin: 0 0 0.25rem; letter-spacing: -0.02em; }
+  .sub { color: var(--muted); margin: 0 0 1.75rem; font-size: 0.95rem; }
+
+  .layout { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1.5rem; align-items: start; }
+  .col-select { grid-column: 1 / 2; }
+  .col-status { grid-column: 2 / 3; }
+  .col-facts { grid-column: 3 / 5; }
+  @media (max-width: 1100px) {
+    .layout { grid-template-columns: 1fr 1fr; }
+    .col-select { grid-column: 1 / 2; }
+    .col-status { grid-column: 2 / 3; }
+    .col-facts { grid-column: 1 / 3; }
+    .col-facts .side-col { position: static !important; max-height: none !important; }
+  }
+  @media (max-width: 700px) {
+    .layout { grid-template-columns: 1fr; }
+    .col-select, .col-status, .col-facts { grid-column: 1 / 2; }
+  }
+
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 1.5rem; margin-bottom: 1.5rem; }
+  .card h2 { margin: 0 0 1rem; font-size: 0.8rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
+  select, input[type=file] {
+    width: 100%; padding: 0.7rem 0.9rem; border-radius: 8px;
+    border: 1px solid var(--border); background: var(--panel2); color: var(--text); font-size: 0.95rem;
+  }
+  .paper-list { display: flex; flex-direction: column; gap: 0.15rem; margin-bottom: 0.25rem; }
+  .paper-row {
+    display: flex; align-items: center; gap: 0.65rem; padding: 0.55rem 0.6rem;
+    border-radius: 8px; cursor: pointer; font-size: 0.9rem; transition: background 0.15s ease;
+  }
+  .paper-row:hover { background: var(--panel2); }
+  .paper-row input { accent-color: var(--accent); width: 16px; height: 16px; flex-shrink: 0; }
+  .row { display: flex; gap: 0.75rem; margin-top: 0.9rem; align-items: center; flex-wrap: wrap; }
+  button {
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    color: #0b0d17; font-weight: 600; border: none; padding: 0.7rem 1.4rem;
+    border-radius: 8px; cursor: pointer; font-size: 0.95rem;
+  }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  button.secondary { background: transparent; border: 1px solid var(--border); color: var(--text); }
+  button.icon-btn { background: rgba(255,255,255,0.06); color: inherit; padding: 0.35rem 0.65rem; font-size: 0.8rem; border-radius: 6px; white-space: nowrap; }
+  .divider { text-align: center; color: var(--muted); font-size: 0.75rem; margin: 1.5rem 0; text-transform: uppercase; letter-spacing: 0.1em; }
+  .doc-meta { color: var(--muted); font-size: 0.85rem; }
+  .badge { font-size: 0.7rem; padding: 0.15rem 0.55rem; border-radius: 999px; font-weight: 600; flex-shrink: 0; display: inline-block; }
+  .badge.queued { background: #23273c; color: var(--muted); }
+  .badge.processing { background: rgba(251,191,36,0.15); color: var(--warn); animation: pulse 1.4s ease-in-out infinite; }
+  .badge.done { background: rgba(52,211,153,0.15); color: var(--ok); }
+  .badge.error { background: rgba(248,113,113,0.15); color: var(--err); }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.45; } }
+  table { width: 100%; border-collapse: collapse; margin-top: 0.5rem; }
+  th, td { text-align: left; padding: 0.55rem 0.4rem; border-bottom: 1px solid var(--border); font-size: 0.82rem; vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; }
+  .preview { color: var(--muted); font-size: 0.76rem; display: block; margin-top: 0.2rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 220px; }
+
+  .side-col { position: sticky; top: 1.5rem; max-height: calc(100vh - 3rem); display: flex; flex-direction: column; container-type: inline-size; }
+  .side-header { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; margin-bottom: 1rem; flex-wrap: wrap; }
+  .side-header h2 { margin: 0; font-size: 1.05rem; white-space: nowrap; }
+  .side-header-status { display: flex; align-items: center; gap: 0.6rem; }
+  .spinner-sm { width: 14px; height: 14px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.15); border-top-color: var(--accent2); animation: spin 0.8s linear infinite; flex-shrink: 0; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .notes-scroll { overflow-y: auto; flex: 1; padding: 0.2rem 0.4rem 0.2rem 0.1rem; margin: -0.2rem -0.4rem -0.2rem -0.1rem; }
+  .notes-grid { display: grid; grid-template-columns: 1fr; gap: 1rem; }
+  @container (min-width: 480px) { .notes-grid { grid-template-columns: 1fr 1fr; } }
+  .notes-empty { grid-column: 1 / -1; color: var(--muted); font-size: 0.88rem; text-align: center; padding: 2.5rem 1rem; border: 1px dashed var(--border); border-radius: 12px; }
+
+  .note {
+    border-radius: 12px; padding: 1.1rem 1.1rem 0.9rem; color: #2a2417; font-size: 0.9rem;
+    box-shadow: 0 8px 20px rgba(0,0,0,0.35); animation: notein 0.35s ease both;
+  }
+  @keyframes notein { from { opacity: 0; transform: translateY(8px) scale(0.98); } to { opacity: 1; transform: translateY(0) scale(1); } }
+  .note-label { font-size: 0.66rem; font-weight: 700; letter-spacing: 0.06em; opacity: 0.65; margin-bottom: 0.5rem; }
+  .note-text { line-height: 1.42; margin-bottom: 0.7rem; }
+  .note-tag { font-size: 0.74rem; font-style: italic; opacity: 0.7; margin-bottom: 0.6rem; }
+  .note-actions { display: flex; gap: 0.4rem; }
+
+  .note-loading, .note-info {
+    border-radius: 12px; padding: 1.1rem; background: var(--panel2); border: 1px solid var(--border);
+    display: flex; align-items: center; gap: 0.75rem; animation: notein 0.35s ease both;
+  }
+  .note-loading .spinner-sm { width: 20px; height: 20px; border-width: 3px; }
+  .note-loading-text, .note-info-text { color: var(--muted); font-size: 0.85rem; line-height: 1.35; }
+</style>
+</head>
+<body>
+  <h1>📄 Batch PDF OCR</h1>
+  <p class="sub">Powered by Together AI (Gemma), one page at a time. Trial mode: only page 1 of each document is OCR'd.</p>
+
+  <div class="layout">
+    <div class="col-select">
+      <div class="card">
+        <h2>Try it on papers</h2>
+        <div class="paper-list" id="paperList"></div>
+        <div class="row">
+          <button id="arxivBtn">▶ Process batch</button>
+        </div>
+        <div class="doc-meta" id="arxivStatus" style="margin-top:0.5rem;"></div>
+      </div>
+
+      <div class="divider">or upload your own</div>
+
+      <div class="card">
+        <h2>Batch upload (up to 100 PDFs)</h2>
+        <input type="file" id="fileInput" accept="application/pdf" multiple>
+        <div class="row">
+          <button class="secondary" id="uploadBtn">Upload &amp; process</button>
+        </div>
+        <div class="doc-meta" id="uploadLabel" style="margin-top:0.5rem;"></div>
+      </div>
+    </div>
+
+    <div class="col-status">
+      <div class="card" id="progressCard" style="display:none;">
+        <h2>Processing status</h2>
+        <table>
+          <thead><tr><th>Document</th><th>Status</th><th>Pages</th><th>Chars</th><th>Words</th></tr></thead>
+          <tbody id="docsBody"></tbody>
+        </table>
+      </div>
+      <div class="card" id="progressEmptyCard">
+        <h2>Processing status</h2>
+        <p class="doc-meta">Select papers or upload PDFs to start a batch.</p>
+      </div>
+    </div>
+
+    <div class="col-facts">
+      <div class="side-col">
+        <div class="side-header">
+          <h2>💡 Did You Know?</h2>
+          <div class="side-header-status">
+            <span class="spinner-sm" id="headerSpinner" style="display:none;"></span>
+            <span class="doc-meta" id="headerSpinnerText" style="display:none;"></span>
+            <button class="icon-btn" id="downloadAllBtn" style="display:none;">⬇ Download all</button>
+          </div>
+        </div>
+        <div class="notes-scroll">
+          <div class="notes-grid" id="notesGrid">
+            <div class="notes-empty" id="notesEmpty">Facts appear here as each document finishes processing.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script>
+const ARXIV_PAPERS = [
+  { title: "Attention Is All You Need (Transformer)", url: "https://arxiv.org/pdf/1706.03762" },
+  { title: "BERT: Pre-training of Deep Bidirectional Transformers", url: "https://arxiv.org/pdf/1810.04805" },
+  { title: "Deep Residual Learning (ResNet)", url: "https://arxiv.org/pdf/1512.03385" },
+  { title: "Generative Adversarial Networks", url: "https://arxiv.org/pdf/1406.2661" },
+  { title: "Adam: A Method for Stochastic Optimization", url: "https://arxiv.org/pdf/1412.6980" },
+  { title: "Denoising Diffusion Probabilistic Models", url: "https://arxiv.org/pdf/2006.11239" },
+  { title: "Language Models are Few-Shot Learners (GPT-3)", url: "https://arxiv.org/pdf/2005.14165" },
+  { title: "An Image is Worth 16x16 Words (ViT)", url: "https://arxiv.org/pdf/2010.11929" },
+];
+const NOTE_COLORS = ['#fdf1a8', '#ffd3e6', '#c3f2d8', '#cfe3ff', '#ffdcb8'];
+
+const paperList = document.getElementById('paperList');
+const arxivBtn = document.getElementById('arxivBtn');
+const arxivStatus = document.getElementById('arxivStatus');
+const fileInput = document.getElementById('fileInput');
+const uploadBtn = document.getElementById('uploadBtn');
+const uploadLabel = document.getElementById('uploadLabel');
+const progressCard = document.getElementById('progressCard');
+const progressEmptyCard = document.getElementById('progressEmptyCard');
+const docsBody = document.getElementById('docsBody');
+const notesGrid = document.getElementById('notesGrid');
+const notesEmpty = document.getElementById('notesEmpty');
+const downloadAllBtn = document.getElementById('downloadAllBtn');
+const headerSpinner = document.getElementById('headerSpinner');
+const headerSpinnerText = document.getElementById('headerSpinnerText');
+
+for (const paper of ARXIV_PAPERS) {
+  const row = document.createElement('label');
+  row.className = 'paper-row';
+  row.innerHTML = `<input type="checkbox" value="${paper.url}" data-title="${escapeHtml(paper.title)}"><span>${escapeHtml(paper.title)}</span>`;
+  paperList.appendChild(row);
+}
+
+let pollTimer = null;
+let activeBatchId = null;
+let allFactsFlat = [];
+
+arxivBtn.addEventListener('click', async () => {
+  const checked = Array.from(paperList.querySelectorAll('input:checked'));
+  if (checked.length === 0) { alert('Select at least one paper.'); return; }
+
+  arxivBtn.disabled = true;
+  const batchId = await ensureBatch();
+  let done = 0;
+  for (const box of checked) {
+    arxivStatus.textContent = `Fetching ${done + 1}/${checked.length}…`;
+    try {
+      const res = await fetch(`/api/batches/${batchId}/documents-from-url`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: box.value, title: box.dataset.title }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        console.error('Failed to queue', box.value, err.detail || err);
+      }
+    } catch (e) {
+      console.error('Error queuing', box.value, e);
+    }
+    done += 1;
+  }
+  arxivStatus.textContent = `${done} paper${done === 1 ? '' : 's'} queued`;
+  arxivBtn.disabled = false;
+  startTracking(batchId);
+});
+
+uploadBtn.addEventListener('click', async () => {
+  const files = Array.from(fileInput.files);
+  if (files.length === 0) { alert('Choose at least one PDF.'); return; }
+  if (files.length > 100) { alert('Max 100 files per batch.'); return; }
+
+  uploadBtn.disabled = true;
+  const batchId = await ensureBatch();
+  let uploaded = 0;
+  for (const file of files) {
+    uploadLabel.textContent = `Uploading ${file.name} (${uploaded + 1}/${files.length})`;
+    const form = new FormData();
+    form.append('file', file);
+    try {
+      const res = await fetch(`/api/batches/${batchId}/documents`, { method: 'POST', body: form });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        console.error('Upload failed for', file.name, err.detail || err);
+      }
+    } catch (e) {
+      console.error('Upload error for', file.name, e);
+    }
+    uploaded += 1;
+  }
+  uploadLabel.textContent = `Uploaded ${uploaded}/${files.length}.`;
+  uploadBtn.disabled = false;
+  startTracking(batchId);
+});
+
+async function ensureBatch() {
+  if (activeBatchId !== null) return activeBatchId;
+  const res = await fetch('/api/batches', { method: 'POST' });
+  const { batch_id } = await res.json();
+  activeBatchId = batch_id;
+  return batch_id;
+}
+
+function startTracking(batchId) {
+  progressCard.style.display = 'block';
+  progressEmptyCard.style.display = 'none';
+  if (pollTimer) clearInterval(pollTimer);
+  pollBatch(batchId);
+  pollTimer = setInterval(() => pollBatch(batchId), 1500);
+}
+
+async function pollBatch(batchId) {
+  const res = await fetch(`/api/batches/${batchId}`);
+  if (!res.ok) return;
+  const batch = await res.json();
+  renderDocuments(batch.documents);
+  renderFactsPanel(batch.documents, batch.facts);
+
+  const stillWorking = batch.documents.some(d =>
+    d.status === 'queued' || d.status === 'processing' ||
+    ((d.status === 'done' || d.status === 'error') && (d.facts_status === 'pending' || d.facts_status === 'generating'))
+  );
+  if (!stillWorking && pollTimer) {
+    clearInterval(pollTimer);
+    pollTimer = null;
+    if (activeBatchId === batchId) activeBatchId = null;
+  }
+}
+
+function renderDocuments(docs) {
+  docsBody.innerHTML = '';
+  for (const doc of docs) {
+    const tr = document.createElement('tr');
+    const label = doc.title || doc.filename;
+    tr.innerHTML = `
+      <td>${escapeHtml(label)}${doc.text_preview ? `<span class="preview">${escapeHtml(doc.text_preview)}</span>` : ''}</td>
+      <td><span class="badge ${doc.status}">${doc.status}</span></td>
+      <td>${doc.pages_done}/${doc.num_pages}</td>
+      <td>${doc.char_count.toLocaleString()}</td>
+      <td>${doc.word_count.toLocaleString()}</td>
+    `;
+    docsBody.appendChild(tr);
+  }
+}
+
+function renderFactsPanel(docs, factsList) {
+  allFactsFlat = factsList;
+  notesGrid.innerHTML = '';
+
+  const relevant = docs.filter(d => d.status === 'done' || d.status === 'error');
+  let anyGenerating = false;
+  let cardCount = 0;
+
+  for (const doc of relevant) {
+    const label = doc.title || doc.filename;
+    if (doc.facts_status === 'pending' || doc.facts_status === 'generating') {
+      anyGenerating = true;
+      notesGrid.appendChild(buildLoadingCard(label));
+      cardCount += 1;
+      continue;
+    }
+    if (doc.facts_status === 'error') {
+      notesGrid.appendChild(buildInfoCard(`Couldn't generate facts for "${label}".`));
+      cardCount += 1;
+      continue;
+    }
+    const docFacts = factsList.filter(f => f.document_id === doc.id);
+    if (docFacts.length === 0) {
+      notesGrid.appendChild(buildInfoCard(`No facts generated for "${label}".`));
+      cardCount += 1;
+      continue;
+    }
+    docFacts.forEach((fact, i) => {
+      notesGrid.appendChild(buildNoteCard(fact, cardCount + i));
+    });
+    cardCount += docFacts.length;
+  }
+
+  if (cardCount === 0) {
+    notesGrid.appendChild(notesEmpty);
+  }
+
+  headerSpinner.style.display = anyGenerating ? 'inline-block' : 'none';
+  headerSpinnerText.style.display = anyGenerating ? 'inline' : 'none';
+  headerSpinnerText.textContent = anyGenerating ? 'Creating info cards…' : '';
+  downloadAllBtn.style.display = factsList.length > 0 ? 'inline-block' : 'none';
+}
+
+function buildLoadingCard(label) {
+  const el = document.createElement('div');
+  el.className = 'note-loading';
+  el.innerHTML = `<span class="spinner-sm"></span><span class="note-loading-text"><strong>${escapeHtml(label)}</strong> is processed.<br>Creating info cards…</span>`;
+  return el;
+}
+
+function buildInfoCard(message) {
+  const el = document.createElement('div');
+  el.className = 'note-info';
+  el.innerHTML = `<span class="note-info-text">${escapeHtml(message)}</span>`;
+  return el;
+}
+
+function buildNoteCard(fact, colorIndex) {
+  const el = document.createElement('div');
+  el.className = 'note';
+  el.style.background = NOTE_COLORS[colorIndex % NOTE_COLORS.length];
+  el.innerHTML = `
+    <div class="note-label">💡 DID YOU KNOW?</div>
+    <div class="note-text">${escapeHtml(fact.fact_text)}</div>
+    <div class="note-tag">— ${escapeHtml(fact.document_title)}</div>
+    <div class="note-actions">
+      <button class="icon-btn" data-action="download" data-id="${fact.id}">⬇ Save</button>
+      <button class="icon-btn" data-action="share" data-id="${fact.id}">𝕏 Share</button>
+    </div>
+  `;
+  return el;
+}
+
+notesGrid.addEventListener('click', (event) => {
+  const btn = event.target.closest('button[data-action]');
+  if (!btn) return;
+  const fact = allFactsFlat.find(f => String(f.id) === btn.dataset.id);
+  if (!fact) return;
+  const index = allFactsFlat.indexOf(fact);
+  if (btn.dataset.action === 'download') downloadNote(fact, index);
+  if (btn.dataset.action === 'share') shareOnTwitter(fact);
+});
+
+downloadAllBtn.addEventListener('click', () => downloadAllNotes(allFactsFlat));
+
+function shareOnTwitter(fact) {
+  const text = `${fact.fact_text}\n\n— ${fact.document_title}`;
+  window.open('https://twitter.com/intent/tweet?text=' + encodeURIComponent(text), '_blank', 'noopener,noreferrer');
+}
+
+function roundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+function wrapText(ctx, text, x, y, maxWidth, lineHeight) {
+  const words = text.split(' ');
+  let line = '';
+  const lines = [];
+  for (const word of words) {
+    const testLine = line + word + ' ';
+    if (ctx.measureText(testLine).width > maxWidth && line !== '') {
+      lines.push(line.trim());
+      line = word + ' ';
+    } else {
+      line = testLine;
+    }
+  }
+  if (line) lines.push(line.trim());
+  lines.forEach((l, i) => ctx.fillText(l, x, y + i * lineHeight));
+  return lines.length;
+}
+
+function drawStickyNote(ctx, x, y, w, h, fact, colorIndex) {
+  const color = NOTE_COLORS[colorIndex % NOTE_COLORS.length];
+  ctx.save();
+  ctx.shadowColor = 'rgba(0,0,0,0.25)';
+  ctx.shadowBlur = 18;
+  ctx.shadowOffsetY = 8;
+  roundRect(ctx, x, y, w, h, 18);
+  ctx.fillStyle = color;
+  ctx.fill();
+  ctx.restore();
+
+  ctx.fillStyle = 'rgba(42,36,23,0.65)';
+  ctx.font = '700 14px -apple-system, sans-serif';
+  ctx.fillText('💡 DID YOU KNOW?', x + 28, y + 42);
+
+  ctx.fillStyle = '#2a2417';
+  ctx.font = '19px -apple-system, sans-serif';
+  wrapText(ctx, fact.fact_text, x + 28, y + 82, w - 56, 27);
+
+  ctx.fillStyle = 'rgba(42,36,23,0.7)';
+  ctx.font = 'italic 14px -apple-system, sans-serif';
+  ctx.fillText('— ' + fact.document_title, x + 28, y + h - 28);
+}
+
+function triggerDownload(canvas, filename) {
+  canvas.toBlob((blob) => {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  });
+}
+
+function downloadNote(fact, colorIndex) {
+  const canvas = document.createElement('canvas');
+  canvas.width = 440;
+  canvas.height = 320;
+  const ctx = canvas.getContext('2d');
+  drawStickyNote(ctx, 10, 10, 420, 300, fact, colorIndex);
+  triggerDownload(canvas, `did-you-know-${fact.id}.png`);
+}
+
+function downloadAllNotes(factsList) {
+  if (factsList.length === 0) return;
+  const cols = Math.min(3, factsList.length);
+  const rows = Math.ceil(factsList.length / cols);
+  const cellW = 440, cellH = 320;
+  const canvas = document.createElement('canvas');
+  canvas.width = cols * cellW;
+  canvas.height = rows * cellH;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#12162a';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  factsList.forEach((fact, i) => {
+    const col = i % cols;
+    const row = Math.floor(i / cols);
+    drawStickyNote(ctx, col * cellW + 10, row * cellH + 10, cellW - 20, cellH - 20, fact, i);
+  });
+  triggerDownload(canvas, 'did-you-know-facts.png');
+}
+
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+</script>
+</body>
+</html>

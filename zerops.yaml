@@ -1,0 +1,35 @@
+zerops:
+  - setup: app
+    build:
+      base: python@3.12
+      os: ubuntu
+      buildCommands:
+        - pip install --no-cache-dir --target=./vendor -r requirements.txt
+      deployFiles: [.]
+      cache:
+        - vendor
+
+    deploy:
+      readinessCheck:
+        httpGet:
+          port: 8000
+          path: /status
+
+    run:
+      base: python@3.12
+      os: ubuntu
+      start: python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+      ports:
+        - port: 8000
+          httpSupport: true
+      healthCheck:
+        httpGet:
+          port: 8000
+          path: /status
+      envVariables:
+        PYTHONPATH: /var/www/vendor
+        DATABASE_URL: postgresql://${db_user}:${db_password}@${db_hostname}:${db_port}/${db_dbName}
+        UPLOAD_DIR: /var/www/data/uploads
+        TOGETHER_MODEL: google/gemma-4-31B-it
+      initCommands:
+        - zsc execOnce ${appVersionId} --retryUntilSuccessful -- python migrate.py
